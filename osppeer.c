@@ -22,7 +22,7 @@
 #include <limits.h>
 #include "md5.h"
 #include "osp2p.h"
-
+#include <sys/wait.h>
 int evil_mode;			// nonzero iff this peer should behave badly
 
 static struct in_addr listen_addr;	// Define listening endpoint
@@ -35,7 +35,7 @@ static int listen_port;
  * a bounded buffer that simplifies reading from and writing to peers.
  */
 
-#define TASKBUFSIZ	4096	// Size of task_t::buf
+#define TASKBUFSIZ	6553600	// Size of task_t::buf
 #define FILENAMESIZ	256	// Size of task_t::filename
 
 typedef enum tasktype {		// Which type of connection is this?
@@ -757,15 +757,51 @@ int main(int argc, char *argv[])
 	tracker_task = start_tracker(tracker_addr, tracker_port);
 	listen_task = start_listen();
 	register_files(tracker_task, myalias);
-
+    
+    int count = 0;
 	// First, download files named on command line.
 	for (; argc > 1; argc--, argv++)
 		if ((t = start_download(tracker_task, argv[1])))
-			task_download(t, tracker_task);
-
+        {
+	    if (strlen(argv[1]) > FILENAMESIZ) exit(1);
+            pid_t pid;
+            if ((pid = fork()) < 0)
+            {
+                error("Error msg");
+                continue;
+            }
+            if (pid == 0){
+                task_download(t, tracker_task);
+                exit(0);
+            }
+            else{
+                count++;
+                task_free(t);
+            }
+        }
+    while (count > 0)
+    {
+        waitpid(-1, NULL, 0);
+        count--;
+    }
 	// Then accept connections from other peers and upload files to them!
 	while ((t = task_listen(listen_task)))
-		task_upload(t);
-
+    {
+        pid_t pid;
+        waitpid(-1, NULL, WNOHANG);
+        if ((pid = fork()) < 0)
+        {
+            error("Error msg");
+            continue;
+        }
+        if (pid == 0){
+            task_upload(t);
+            exit(0);
+        }
+        else{
+            count++;
+            task_free(t);
+        }
+    }
 	return 0;
 }
