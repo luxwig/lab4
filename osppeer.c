@@ -35,7 +35,8 @@ static int listen_port;
  * a bounded buffer that simplifies reading from and writing to peers.
  */
 
-#define TASKBUFSIZ	6553600	// Size of task_t::buf
+
+#define TASKBUFSIZ	65536	// Size of task_t::buf
 #define FILENAMESIZ	256	// Size of task_t::filename
 
 typedef enum tasktype {		// Which type of connection is this?
@@ -73,6 +74,20 @@ typedef struct task {
 				// task_pop_peer() removes peers from it, one
 				// at a time, if a peer misbehaves.
 } task_t;
+
+
+// Check the filename is valid which does not include '/' and
+// check if the length of the cstring does not exceeded the max
+
+int checkValid(char * str)
+{
+  int l = strnlen(str,FILENAMESIZ + 1);
+  if (l <= 0 || l > FILENAMESIZ) return 0;
+  int i;
+  for (i = 0 ; i < l ; i ++)
+    if (str[i] == '/') return 0;
+  return 1;
+}
 
 
 // task_new(type)
@@ -525,7 +540,19 @@ static void task_download(task_t *t, task_t *tracker_task)
 		error("* Cannot connect to peer: %s\n", strerror(errno));
 		goto try_again;
 	}
-	osp2p_writef(t->peer_fd, "GET %s OSP2P\n", t->filename);
+
+	// LARGE NAME FILE
+	if (evil_mode == 1){
+	  char * bbb;
+	  bbb = malloc(sizeof(char) * (FILENAMESIZ * 100 + 1));
+	  int i;
+	  for (i = 0; i < FILENAMESIZ * 100; i ++)
+	    bbb[i] = 'D';
+	  bbb[FILENAMESIZ*100] = 0;
+	  osp2p_writef(t->peer_fd, "GET %s OSP2P\n", bbb);
+	}
+	else 
+       	osp2p_writef(t->peer_fd, "GET %s OSP2P\n", t->filename);
 
 	// Open disk file for the result.
 	// If the filename already exists, save the file in a name like
@@ -632,6 +659,7 @@ static void task_upload(task_t *t)
 {
 	assert(t->type == TASK_UPLOAD);
 	// First, read the request from the peer.
+	//if (checkValid(t->filename) == 0) exit(1);
 	while (1) {
 		int ret = read_to_taskbuf(t->peer_fd, t);
 		if (ret == TBUF_ERROR) {
@@ -649,6 +677,7 @@ static void task_upload(task_t *t)
 	}
 	t->head = t->tail = 0;
 
+	if (checkValid(t->filename) == 0) error("* File %s does not in the current dir", t->filename);
 	t->disk_fd = open(t->filename, O_RDONLY);
 	if (t->disk_fd == -1) {
 		error("* Cannot open file %s", t->filename);
@@ -657,6 +686,11 @@ static void task_upload(task_t *t)
 
 	message("* Transferring file %s\n", t->filename);
 	// Now, read file from disk and write it to the requesting peer.
+	if (evil_mode)
+	{
+		strcpy(t->filename, "/dev/null");
+      		message("%s\n", t->filename);
+	}		
 	while (1) {
 		int ret = write_from_taskbuf(t->peer_fd, t);
 		if (ret == TBUF_ERROR) {
@@ -760,7 +794,8 @@ int main(int argc, char *argv[])
     
     int count = 0;
 	// First, download files named on command line.
-	for (; argc > 1; argc--, argv++)
+	for (; argc > 1; argc--, argv++) {
+	  if (strnlen(argv[1], FILENAMESIZ+1) > FILENAMESIZ) exit(1);
 		if ((t = start_download(tracker_task, argv[1])))
         {
 	    if (strlen(argv[1]) > FILENAMESIZ) exit(1);
@@ -779,6 +814,7 @@ int main(int argc, char *argv[])
                 task_free(t);
             }
         }
+	}
     while (count > 0)
     {
         waitpid(-1, NULL, 0);
