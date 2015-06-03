@@ -26,7 +26,14 @@ run-good: osppeer
 	@echo + ./osppeer -dtest -t164.67.100.231:12997 cat1.jpg cat2.jpg cat3.jpg
 	@./osppeer -dtest -t164.67.100.231:12997 cat1.jpg cat2.jpg cat3.jpg
 
-run-evil: osppeer
+run-eslo: osppeer
+	@-/bin/rm -rf test
+	@echo + mkdir test
+	@mkdir test
+	@echo + ./osppeer -b -dtest -t164.67.100.231:12998 cat1.jpg cat2.jpg cat3.jpg
+	@./osppeer -b -dtest -t164.67.100.231:12998 cat1.jpg cat2.jpg cat3.jpg
+
+run-egod: osppeer
 	@-/bin/rm -rf test
 	@echo + mkdir test
 	@mkdir test

